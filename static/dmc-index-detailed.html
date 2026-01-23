@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DMC Industries PNW LLC | Defense Drone Manufacturing</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Source+Sans+3:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --gold: #F5A623;
+            --gold-dark: #D4890F;
+            --navy: #1a2634;
+            --navy-deep: #0d1419;
+            --slate: #4a6274;
+            --white: #f0f4f7;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Source Sans 3', sans-serif;
+            background: var(--navy-deep);
+            color: var(--white);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Animated grid background */
+        .bg-grid {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(rgba(245, 166, 35, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(245, 166, 35, 0.03) 1px, transparent 1px);
+            background-size: 60px 60px;
+            z-index: 0;
+            animation: gridPulse 8s ease-in-out infinite;
+        }
+
+        @keyframes gridPulse {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
+        }
+
+        /* Scan line effect */
+        .scanline {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, transparent, var(--gold), transparent);
+            opacity: 0.3;
+            z-index: 1;
+            animation: scan 4s linear infinite;
+        }
+
+        @keyframes scan {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(100vh); }
+        }
+
+        .container {
+            position: relative;
+            z-index: 10;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        .logo-wrapper {
+            position: relative;
+            margin-bottom: 3rem;
+            animation: logoEnter 1s ease-out;
+        }
+
+        @keyframes logoEnter {
+            0% { 
+                opacity: 0; 
+                transform: scale(0.8) translateY(-20px);
+            }
+            100% { 
+                opacity: 1; 
+                transform: scale(1) translateY(0);
+            }
+        }
+
+        .logo {
+            width: 140px;
+            height: 160px;
+            filter: drop-shadow(0 0 30px rgba(245, 166, 35, 0.4));
+            transition: filter 0.3s ease;
+        }
+
+        .logo:hover {
+            filter: drop-shadow(0 0 50px rgba(245, 166, 35, 0.6));
+        }
+
+        .content {
+            text-align: center;
+            max-width: 700px;
+            animation: contentEnter 1s ease-out 0.3s both;
+        }
+
+        @keyframes contentEnter {
+            0% { 
+                opacity: 0; 
+                transform: translateY(30px);
+            }
+            100% { 
+                opacity: 1; 
+                transform: translateY(0);
+            }
+        }
+
+        .tagline {
+            font-family: 'Orbitron', monospace;
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.4em;
+            text-transform: uppercase;
+            color: var(--gold);
+            margin-bottom: 1.5rem;
+            position: relative;
+            display: inline-block;
+        }
+
+        .tagline::before,
+        .tagline::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 40px;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--gold));
+        }
+
+        .tagline::before {
+            right: calc(100% + 1rem);
+            background: linear-gradient(90deg, transparent, var(--gold));
+        }
+
+        .tagline::after {
+            left: calc(100% + 1rem);
+            background: linear-gradient(90deg, var(--gold), transparent);
+        }
+
+        h1 {
+            font-family: 'Orbitron', monospace;
+            font-size: clamp(2rem, 5vw, 3.5rem);
+            font-weight: 900;
+            letter-spacing: 0.05em;
+            margin-bottom: 2rem;
+            background: linear-gradient(135deg, var(--white) 0%, var(--gold) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .description {
+            font-size: 1.1rem;
+            line-height: 1.8;
+            color: rgba(240, 244, 247, 0.8);
+            font-weight: 300;
+            margin-bottom: 3rem;
+        }
+
+        .description strong {
+            color: var(--gold);
+            font-weight: 600;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1.5rem;
+            background: rgba(245, 166, 35, 0.1);
+            border: 1px solid rgba(245, 166, 35, 0.3);
+            border-radius: 4px;
+            font-family: 'Orbitron', monospace;
+            font-size: 0.8rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            animation: badgePulse 2s ease-in-out infinite;
+        }
+
+        @keyframes badgePulse {
+            0%, 100% { border-color: rgba(245, 166, 35, 0.3); }
+            50% { border-color: rgba(245, 166, 35, 0.6); }
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--gold);
+            border-radius: 50%;
+            animation: dotBlink 1.5s ease-in-out infinite;
+        }
+
+        @keyframes dotBlink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .corner-accent {
+            position: fixed;
+            width: 100px;
+            height: 100px;
+            border: 1px solid rgba(245, 166, 35, 0.2);
+            z-index: 5;
+        }
+
+        .corner-accent.top-left {
+            top: 20px;
+            left: 20px;
+            border-right: none;
+            border-bottom: none;
+        }
+
+        .corner-accent.top-right {
+            top: 20px;
+            right: 20px;
+            border-left: none;
+            border-bottom: none;
+        }
+
+        .corner-accent.bottom-left {
+            bottom: 20px;
+            left: 20px;
+            border-right: none;
+            border-top: none;
+        }
+
+        .corner-accent.bottom-right {
+            bottom: 20px;
+            right: 20px;
+            border-left: none;
+            border-top: none;
+        }
+
+        .footer {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 0.7rem;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            color: var(--slate);
+            font-family: 'Orbitron', monospace;
+        }
+
+        @media (max-width: 600px) {
+            .logo {
+                width: 140px;
+            }
+
+            .tagline::before,
+            .tagline::after {
+                display: none;
+            }
+
+            .corner-accent {
+                width: 50px;
+                height: 50px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-grid"></div>
+    <div class="scanline"></div>
+    
+    <div class="corner-accent top-left"></div>
+    <div class="corner-accent top-right"></div>
+    <div class="corner-accent bottom-left"></div>
+    <div class="corner-accent bottom-right"></div>
+
+    <div class="container">
+        <div class="logo-wrapper">
+            <svg class="logo" viewBox="0 0 140 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M70 4L136 23V108L70 156L4 108V23L70 4Z" stroke="#F5A623" stroke-width="2" fill="none"/>
+                <path d="M70 16L124 32V102L70 144L16 102V32L70 16Z" stroke="#F5A623" stroke-width="0.5" fill="none" opacity="0.4"/>
+                <text x="70" y="72" text-anchor="middle" font-family="Orbitron, monospace" font-size="28" font-weight="900" fill="#F0F4F7">DMC</text>
+                <text x="70" y="90" text-anchor="middle" font-family="Orbitron, monospace" font-size="8" font-weight="700" fill="#F5A623" letter-spacing="0.2em">INDUSTRIES</text>
+                <line x1="50" y1="105" x2="90" y2="105" stroke="#F5A623" stroke-width="0.5" opacity="0.6"/>
+                <line x1="55" y1="112" x2="85" y2="112" stroke="#F5A623" stroke-width="0.5" opacity="0.4"/>
+            </svg>
+        </div>
+        
+        <div class="content">
+            <span class="tagline">Defense Technology</span>
+            <h1>DMC Industries PNW LLC</h1>
+            <p class="description">
+                A Pacific Northwest-based defense technology company developing advanced <strong>unmanned systems</strong> and <strong>mesh networking solutions</strong> for military applications. We specialize in <strong>NDAA-compliant FPV drone manufacturing</strong> and proprietary swarm coordination technology designed for battlefield resilience. Our mission is to deliver American-made defense capabilities that keep warfighters connected and effective.
+            </p>
+            <div class="status-badge">
+                <span class="status-dot"></span>
+                <span>Under Construction</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">Pacific Northwest, USA</div>
+</body>
+</html>
