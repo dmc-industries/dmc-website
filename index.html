@@ -278,6 +278,204 @@
                 height: 50px;
             }
         }
+
+        /* VM Modal Styles */
+        .vm-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 1;
+            transition: opacity 0.3s ease;
+        }
+
+        .vm-modal.hidden {
+            display: none;
+        }
+
+        .vm-modal.fade-out {
+            opacity: 0;
+        }
+
+        .vm-modal-backdrop {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(13, 20, 25, 0.95);
+            backdrop-filter: blur(4px);
+        }
+
+        .vm-modal-content {
+            position: relative;
+            background: var(--navy-deep);
+            border: 1px solid var(--gold);
+            border-radius: 4px;
+            box-shadow: 0 0 40px rgba(245, 166, 35, 0.2);
+            max-width: 90vw;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            animation: modalEnter 0.3s ease;
+        }
+
+        @keyframes modalEnter {
+            from {
+                opacity: 0;
+                transform: scale(0.95) translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1) translateY(0);
+            }
+        }
+
+        .vm-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid rgba(245, 166, 35, 0.3);
+            font-family: 'Orbitron', monospace;
+            font-size: 0.8rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--gold);
+        }
+
+        .vm-header-left {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .vm-status-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--gold);
+            border-radius: 50%;
+            animation: dotBlink 1.5s ease-in-out infinite;
+        }
+
+        .vm-status-dot.booting {
+            background: #f59e0b;
+        }
+
+        .vm-status-dot.ready {
+            background: #22c55e;
+            animation: none;
+        }
+
+        .vm-close {
+            background: none;
+            border: 1px solid rgba(245, 166, 35, 0.3);
+            color: var(--gold);
+            font-size: 1.2rem;
+            width: 28px;
+            height: 28px;
+            border-radius: 4px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+
+        .vm-close:hover {
+            background: rgba(245, 166, 35, 0.1);
+            border-color: var(--gold);
+        }
+
+        #vm-terminal {
+            padding: 0;
+            overflow: hidden;
+        }
+
+        #vm-terminal .term {
+            padding: 0.5rem;
+        }
+
+        .vm-loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 4rem 6rem;
+            gap: 1.5rem;
+            font-family: 'Orbitron', monospace;
+            font-size: 0.85rem;
+            color: var(--gold);
+            letter-spacing: 0.1em;
+        }
+
+        .vm-loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 2px solid rgba(245, 166, 35, 0.2);
+            border-top-color: var(--gold);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .vm-loading-text {
+            text-align: center;
+        }
+
+        .vm-loading-subtext {
+            font-family: 'Source Sans 3', sans-serif;
+            font-size: 0.75rem;
+            color: var(--slate);
+            margin-top: 0.5rem;
+            letter-spacing: 0.05em;
+        }
+
+        /* Make status badge clickable */
+        .status-badge {
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .status-badge:hover {
+            background: rgba(245, 166, 35, 0.2);
+            border-color: var(--gold);
+            transform: translateY(-1px);
+        }
+
+        /* JSLinux Terminal Styles */
+        .term {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            color: #f0f0f0;
+            background: #000000;
+            padding: 8px;
+        }
+
+        .term_content a {
+            color: #ffff00;
+        }
+
+        .term_cursor {
+            color: #000000;
+            background: #00ff00;
+        }
+
+        .term_scrollbar {
+            display: none; /* Hide scrollbar for cleaner look */
+        }
+
+        #vm-terminal #term_container {
+            background: #000000;
+        }
     </style>
 </head>
 <body>
@@ -315,5 +513,213 @@
     </div>
 
     <div class="footer">Pacific Northwest, USA</div>
+
+    <!-- VM Modal -->
+    <div id="vm-modal" class="vm-modal hidden">
+        <div class="vm-modal-backdrop"></div>
+        <div class="vm-modal-content">
+            <div class="vm-header">
+                <div class="vm-header-left">
+                    <span class="vm-status-dot" id="vm-status-dot"></span>
+                    <span id="vm-status-text">DMC Terminal</span>
+                </div>
+                <button class="vm-close" id="vm-close" title="Close (Esc)">&times;</button>
+            </div>
+            <div id="vm-terminal">
+                <div class="vm-loading" id="vm-loading">
+                    <div class="vm-loading-spinner"></div>
+                    <div class="vm-loading-text">
+                        Initializing System
+                        <div class="vm-loading-subtext">Loading RISC-V emulator...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // JSLinux required globals (must be in global scope)
+    var term, console_write1;
+    var graphic_display, display_key_event, display_mouse_event;
+    var net_state, net_write_packet, net_set_carrier;
+    var display_wheel_event;
+    var fs_import_file;
+    var Module = {};
+
+    // Update downloading progress indicator (required by JSLinux)
+    function update_downloading(flag) {
+        // Could show/hide a loading indicator if desired
+    }
+
+    // Catch any uncaught errors for debugging
+    window.addEventListener('error', function(e) {
+        console.error('JSLinux error:', e.message, e.filename, e.lineno);
+    });
+
+    (function() {
+        'use strict';
+
+        // VM State
+        let vmLoaded = false;
+        let vmRunning = false;
+        let vmTerm = null;
+
+        // DOM Elements
+        const modal = document.getElementById('vm-modal');
+        const backdrop = modal.querySelector('.vm-modal-backdrop');
+        const closeBtn = document.getElementById('vm-close');
+        const statusBadge = document.querySelector('.status-badge');
+        const terminalContainer = document.getElementById('vm-terminal');
+        const loadingEl = document.getElementById('vm-loading');
+        const statusDot = document.getElementById('vm-status-dot');
+        const statusText = document.getElementById('vm-status-text');
+
+        function showModal() {
+            modal.classList.remove('hidden');
+            modal.classList.remove('fade-out');
+            document.body.style.overflow = 'hidden';
+
+            if (!vmLoaded) {
+                loadVM();
+            } else if (vmTerm) {
+                vmTerm.focus();
+            }
+        }
+
+        function hideModal() {
+            modal.classList.add('fade-out');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                modal.classList.remove('fade-out');
+                document.body.style.overflow = '';
+            }, 300);
+        }
+
+        function updateStatus(status, text) {
+            statusDot.className = 'vm-status-dot ' + status;
+            if (text) statusText.textContent = text;
+        }
+
+        function term_handler(str) {
+            for (let i = 0; i < str.length; i++) {
+                if (console_write1) {
+                    console_write1(str.charCodeAt(i));
+                }
+            }
+        }
+
+        function loadScriptCallback(src, callback) {
+            var script = document.createElement('script');
+            script.src = src;
+            script.onload = script.onreadystatechange = function() {
+                if (!this.readyState || this.readyState === 'loaded' || this.readyState === 'complete') {
+                    script.onload = script.onreadystatechange = null;
+                    if (callback) callback();
+                }
+            };
+            document.head.appendChild(script);
+        }
+
+        function loadVM() {
+            const basePath = 'assets/jslinux/';
+
+            updateStatus('booting', 'Loading Terminal...');
+
+            // Load term.js first, then set up terminal and load emulator
+            loadScriptCallback(basePath + 'term.js', function() {
+                updateStatus('booting', 'Initializing...');
+
+                // Remove loading indicator and create terminal container
+                loadingEl.style.display = 'none';
+
+                const termContainer = document.createElement('div');
+                termContainer.id = 'term_container';
+                terminalContainer.appendChild(termContainer);
+
+                // Create terminal (80 cols, 24 rows)
+                vmTerm = new Term(80, 24, term_handler, 10000);
+                vmTerm.open(termContainer, null);
+                vmTerm.term_el.style.fontSize = '14px';
+                vmTerm.write("Booting RISC-V Linux...\r\n");
+
+                // Set global term reference (CRITICAL - emulator uses this)
+                term = vmTerm;
+
+                updateStatus('booting', 'Loading Emulator...');
+
+                // Get absolute URL for config file
+                const cfgUrl = new URL(basePath + 'root-riscv64.cfg', window.location.href).href;
+
+                // Configure Emscripten module BEFORE loading the script
+                Module.print = function(text) {
+                    console.log('JSLinux stdout:', text);
+                };
+                Module.printErr = function(text) {
+                    console.error('JSLinux stderr:', text);
+                };
+                Module.preRun = function() {
+                    console.log('JSLinux: Module.preRun called');
+                    // Wrap C functions for JS access
+                    console_write1 = Module.cwrap('console_queue_char', null, ['number']);
+                    fs_import_file = Module.cwrap('fs_import_file', null, ['string', 'number', 'number']);
+                    display_key_event = Module.cwrap('display_key_event', null, ['number', 'number']);
+                    display_mouse_event = Module.cwrap('display_mouse_event', null, ['number', 'number', 'number']);
+                    display_wheel_event = Module.cwrap('display_wheel_event', null, ['number']);
+                    net_write_packet = Module.cwrap('net_write_packet', null, ['number', 'number']);
+                    net_set_carrier = Module.cwrap('net_set_carrier', null, ['number']);
+
+                    // Start the VM with config
+                    console.log('JSLinux: Starting VM with config:', cfgUrl);
+                    try {
+                        Module.ccall(
+                            "vm_start",
+                            null,
+                            ["string", "number", "string", "string", "number", "number", "number", "string"],
+                            [cfgUrl, 128, "", "", 0, 0, 0, ""]
+                        );
+                        console.log('JSLinux: vm_start completed');
+                    } catch (e) {
+                        console.error('JSLinux: vm_start failed:', e);
+                    }
+                };
+
+                // Load the WASM emulator (will trigger Module.preRun when ready)
+                loadScriptCallback(basePath + 'riscvemu64-wasm.js', function() {
+                    console.log('JSLinux: Emulator script loaded');
+                    vmLoaded = true;
+                    vmRunning = true;
+
+                    // Update status when boot completes
+                    setTimeout(function() {
+                        if (vmRunning) {
+                            updateStatus('ready', 'DMC Terminal');
+                        }
+                    }, 4000);
+                });
+            });
+        }
+
+        // Event Listeners
+        statusBadge.addEventListener('click', showModal);
+        closeBtn.addEventListener('click', hideModal);
+        backdrop.addEventListener('click', hideModal);
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !modal.classList.contains('hidden')) {
+                hideModal();
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        });
+
+        // Expose for debugging
+        window.dmcVM = {
+            show: showModal,
+            hide: hideModal,
+            isLoaded: () => vmLoaded,
+            isRunning: () => vmRunning
+        };
+    })();
+    </script>
 </body>
 </html>
