@@ -55,19 +55,20 @@
         // DMC Industries custom welcome
         var motd = [
             "\r\n",
-            "    \x1b[33m____  __  ________\x1b[0m\r\n",
-            "   \x1b[33m/ __ \\/  |/  / ____/\x1b[0m\r\n",
-            "  \x1b[33m/ / / / /|_/ / /    \x1b[0m\r\n",
-            " \x1b[33m/ /_/ / /  / / /___  \x1b[0m\r\n",
-            "\x1b[33m/_____/_/  /_/\\____/  \x1b[0m\r\n",
-            "    \x1b[33mINDUSTRIES PNW\x1b[0m\r\n",
+            " \x1b[1;33m██████╗ ███╗   ███╗ ██████╗\x1b[0m\r\n",
+            " \x1b[1;33m██╔══██╗████╗ ████║██╔════╝\x1b[0m\r\n",
+            " \x1b[1;33m██║  ██║██╔████╔██║██║     \x1b[0m\r\n",
+            " \x1b[1;33m██║  ██║██║╚██╔╝██║██║     \x1b[0m\r\n",
+            " \x1b[1;33m██████╔╝██║ ╚═╝ ██║╚██████╗\x1b[0m\r\n",
+            " \x1b[1;33m╚═════╝ ╚═╝     ╚═╝ ╚═════╝\x1b[0m\r\n",
+            "      \x1b[33mINDUSTRIES PNW\x1b[0m\r\n",
             "\r\n",
-            "\x1b[37m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1b[0m\r\n",
+            " \x1b[37m════════════════════════════════════\x1b[0m\r\n",
             "  Welcome to DMC Industries Terminal\r\n",
-            "  RISC-V Linux running in WebAssembly\r\n",
-            "\x1b[37m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1b[0m\r\n",
+            "  RISC-V Linux via WebAssembly\r\n",
+            " \x1b[37m════════════════════════════════════\x1b[0m\r\n",
             "\r\n",
-            "Booting system...\r\n\r\n"
+            " Booting system...\r\n\r\n"
         ];
         for (var i = 0; i < motd.length; i++) {
             term.write(motd[i]);
@@ -82,7 +83,7 @@
             net_write_packet = Module.cwrap('net_write_packet', null, ['number', 'number']);
             net_set_carrier = Module.cwrap('net_set_carrier', null, ['number']);
 
-            var cfgUrl = new URL('root-riscv64.cfg', window.location.href).href;
+            var cfgUrl = new URL('root-riscv64.cfg?v=' + Date.now(), window.location.href).href;
             Module.ccall("vm_start", null,
                 ["string", "number", "string", "string", "number", "number", "number", "string"],
                 [cfgUrl, 128, "", "", 0, 0, 0, ""]
