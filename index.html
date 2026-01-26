@@ -533,36 +533,18 @@
                         <div class="vm-loading-subtext">Loading RISC-V emulator...</div>
                     </div>
                 </div>
+                <iframe id="vm-iframe" src="" style="display:none; border:none; width:670px; height:410px; background:#000;"></iframe>
             </div>
         </div>
     </div>
 
     <script>
-    // JSLinux required globals (must be in global scope)
-    var term, console_write1;
-    var graphic_display, display_key_event, display_mouse_event;
-    var net_state, net_write_packet, net_set_carrier;
-    var display_wheel_event;
-    var fs_import_file;
-    var Module = {};
-
-    // Update downloading progress indicator (required by JSLinux)
-    function update_downloading(flag) {
-        // Could show/hide a loading indicator if desired
-    }
-
-    // Catch any uncaught errors for debugging
-    window.addEventListener('error', function(e) {
-        console.error('JSLinux error:', e.message, e.filename, e.lineno);
-    });
-
     (function() {
         'use strict';
 
         // VM State
         let vmLoaded = false;
         let vmRunning = false;
-        let vmTerm = null;
 
         // DOM Elements
         const modal = document.getElementById('vm-modal');
@@ -581,8 +563,6 @@
 
             if (!vmLoaded) {
                 loadVM();
-            } else if (vmTerm) {
-                vmTerm.focus();
             }
         }
 
@@ -600,103 +580,29 @@
             if (text) statusText.textContent = text;
         }
 
-        function term_handler(str) {
-            for (let i = 0; i < str.length; i++) {
-                if (console_write1) {
-                    console_write1(str.charCodeAt(i));
-                }
-            }
-        }
-
-        function loadScriptCallback(src, callback) {
-            var script = document.createElement('script');
-            script.src = src;
-            script.onload = script.onreadystatechange = function() {
-                if (!this.readyState || this.readyState === 'loaded' || this.readyState === 'complete') {
-                    script.onload = script.onreadystatechange = null;
-                    if (callback) callback();
-                }
-            };
-            document.head.appendChild(script);
-        }
-
         function loadVM() {
-            const basePath = 'assets/jslinux/';
-
             updateStatus('booting', 'Loading Terminal...');
 
-            // Load term.js first, then set up terminal and load emulator
-            loadScriptCallback(basePath + 'term.js', function() {
-                updateStatus('booting', 'Initializing...');
+            const iframe = document.getElementById('vm-iframe');
 
-                // Remove loading indicator and create terminal container
-                loadingEl.style.display = 'none';
-
-                const termContainer = document.createElement('div');
-                termContainer.id = 'term_container';
-                terminalContainer.appendChild(termContainer);
-
-                // Create terminal (80 cols, 24 rows)
-                vmTerm = new Term(80, 24, term_handler, 10000);
-                vmTerm.open(termContainer, null);
-                vmTerm.term_el.style.fontSize = '14px';
-                vmTerm.write("Booting RISC-V Linux...\r\n");
-
-                // Set global term reference (CRITICAL - emulator uses this)
-                term = vmTerm;
-
-                updateStatus('booting', 'Loading Emulator...');
-
-                // Get absolute URL for config file
-                const cfgUrl = new URL(basePath + 'root-riscv64.cfg', window.location.href).href;
-
-                // Configure Emscripten module BEFORE loading the script
-                Module.print = function(text) {
-                    console.log('JSLinux stdout:', text);
-                };
-                Module.printErr = function(text) {
-                    console.error('JSLinux stderr:', text);
-                };
-                Module.preRun = function() {
-                    console.log('JSLinux: Module.preRun called');
-                    // Wrap C functions for JS access
-                    console_write1 = Module.cwrap('console_queue_char', null, ['number']);
-                    fs_import_file = Module.cwrap('fs_import_file', null, ['string', 'number', 'number']);
-                    display_key_event = Module.cwrap('display_key_event', null, ['number', 'number']);
-                    display_mouse_event = Module.cwrap('display_mouse_event', null, ['number', 'number', 'number']);
-                    display_wheel_event = Module.cwrap('display_wheel_event', null, ['number']);
-                    net_write_packet = Module.cwrap('net_write_packet', null, ['number', 'number']);
-                    net_set_carrier = Module.cwrap('net_set_carrier', null, ['number']);
-
-                    // Start the VM with config
-                    console.log('JSLinux: Starting VM with config:', cfgUrl);
-                    try {
-                        Module.ccall(
-                            "vm_start",
-                            null,
-                            ["string", "number", "string", "string", "number", "number", "number", "string"],
-                            [cfgUrl, 128, "", "", 0, 0, 0, ""]
-                        );
-                        console.log('JSLinux: vm_start completed');
-                    } catch (e) {
-                        console.error('JSLinux: vm_start failed:', e);
-                    }
-                };
-
-                // Load the WASM emulator (will trigger Module.preRun when ready)
-                loadScriptCallback(basePath + 'riscvemu64-wasm.js', function() {
-                    console.log('JSLinux: Emulator script loaded');
+            // Listen for ready message from iframe
+            window.addEventListener('message', function(e) {
+                if (e.data && e.data.type === 'vm-ready') {
                     vmLoaded = true;
                     vmRunning = true;
-
-                    // Update status when boot completes
                     setTimeout(function() {
-                        if (vmRunning) {
-                            updateStatus('ready', 'DMC Terminal');
-                        }
-                    }, 4000);
-                });
+                        updateStatus('ready', 'DMC Terminal');
+                    }, 3000);
+                }
             });
+
+            // Load the VM in iframe
+            iframe.src = 'assets/jslinux/vm.html';
+            iframe.onload = function() {
+                loadingEl.style.display = 'none';
+                iframe.style.display = 'block';
+                updateStatus('booting', 'Booting Linux...');
+            };
         }
 
         // Event Listeners

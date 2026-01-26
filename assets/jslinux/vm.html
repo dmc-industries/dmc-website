@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DMC Terminal</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #000;
+            overflow: hidden;
+        }
+        .term {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            color: #f0f0f0;
+            background: #000000;
+            padding: 8px;
+        }
+        .term_content a { color: #ffff00; }
+        .term_cursor { color: #000; background: #0f0; }
+        .term_scrollbar { display: none; }
+        #term_container { background: #000; }
+    </style>
+</head>
+<body>
+    <div id="term_container"></div>
+
+    <script>
+    var term, console_write1;
+    var graphic_display, display_key_event, display_mouse_event;
+    var net_state, net_write_packet, net_set_carrier;
+    var display_wheel_event, fs_import_file;
+    var Module = {};
+
+    function update_downloading(flag) {}
+
+    function term_handler(str) {
+        for (var i = 0; i < str.length; i++) {
+            if (console_write1) console_write1(str.charCodeAt(i));
+        }
+    }
+
+    function loadScript(src, callback) {
+        var script = document.createElement('script');
+        script.src = src;
+        script.onload = callback;
+        document.head.appendChild(script);
+    }
+
+    loadScript('term.js', function() {
+        term = new Term(80, 24, term_handler, 10000);
+        term.open(document.getElementById('term_container'), null);
+        term.write("Booting RISC-V Linux...\r\n");
+
+        Module.preRun = function() {
+            console_write1 = Module.cwrap('console_queue_char', null, ['number']);
+            fs_import_file = Module.cwrap('fs_import_file', null, ['string', 'number', 'number']);
+            display_key_event = Module.cwrap('display_key_event', null, ['number', 'number']);
+            display_mouse_event = Module.cwrap('display_mouse_event', null, ['number', 'number', 'number']);
+            display_wheel_event = Module.cwrap('display_wheel_event', null, ['number']);
+            net_write_packet = Module.cwrap('net_write_packet', null, ['number', 'number']);
+            net_set_carrier = Module.cwrap('net_set_carrier', null, ['number']);
+
+            var cfgUrl = new URL('root-riscv64.cfg', window.location.href).href;
+            Module.ccall("vm_start", null,
+                ["string", "number", "string", "string", "number", "number", "number", "string"],
+                [cfgUrl, 128, "", "", 0, 0, 0, ""]
+            );
+        };
+
+        loadScript('riscvemu64-wasm.js', function() {
+            // Notify parent when ready
+            if (window.parent !== window) {
+                window.parent.postMessage({ type: 'vm-ready' }, '*');
+            }
+        });
+    });
+    </script>
+</body>
+</html>
