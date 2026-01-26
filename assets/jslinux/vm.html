@@ -35,6 +35,62 @@
 
     function update_downloading(flag) {}
 
+    // Ethernet networking via WebSocket relay
+    function Ethernet(url) {
+        try {
+            this.socket = new WebSocket(url);
+        } catch(err) {
+            this.socket = null;
+            console.log("Could not open websocket url=" + url);
+            return;
+        }
+        this.socket.binaryType = 'arraybuffer';
+        this.socket.onmessage = this.messageHandler.bind(this);
+        this.socket.onclose = this.closeHandler.bind(this);
+        this.socket.onopen = this.openHandler.bind(this);
+        this.socket.onerror = this.errorHandler.bind(this);
+    }
+
+    Ethernet.prototype.openHandler = function(e) {
+        console.log("Network: WebSocket connected");
+        if (net_set_carrier) net_set_carrier(1);
+    };
+
+    Ethernet.prototype.closeHandler = function(e) {
+        console.log("Network: WebSocket closed");
+        if (net_set_carrier) net_set_carrier(0);
+    };
+
+    Ethernet.prototype.errorHandler = function(e) {
+        console.log("Network: WebSocket error:", e);
+    };
+
+    Ethernet.prototype.messageHandler = function(e) {
+        if (e.data instanceof ArrayBuffer) {
+            var buf = new Uint8Array(e.data);
+            var buf_len = buf.length;
+            var buf_addr = Module._malloc(buf_len);
+            Module.HEAPU8.set(buf, buf_addr);
+            net_write_packet(buf_addr, buf_len);
+            Module._free(buf_addr);
+        } else {
+            var str = e.data.toString();
+            if (str.substring(0, 5) == "ping:") {
+                try {
+                    this.socket.send('pong:' + str.substring(5));
+                } catch (err) {}
+            }
+        }
+    };
+
+    Ethernet.prototype.recv_packet = function(buf) {
+        if (this.socket) {
+            try {
+                this.socket.send(buf);
+            } catch (err) {}
+        }
+    };
+
     function term_handler(str) {
         for (var i = 0; i < str.length; i++) {
             if (console_write1) console_write1(str.charCodeAt(i));
@@ -83,10 +139,16 @@
             net_write_packet = Module.cwrap('net_write_packet', null, ['number', 'number']);
             net_set_carrier = Module.cwrap('net_set_carrier', null, ['number']);
 
+            // Initialize networking via WebSocket relay
+            var net_url = "wss://relay.widgetry.org/";
+            net_state = new Ethernet(net_url);
+
             var cfgUrl = new URL('root-riscv64.cfg?v=' + Date.now(), window.location.href).href;
+            // net_enabled=1 tells VM to create network device
+            // Carrier signal comes when WebSocket connects
             Module.ccall("vm_start", null,
                 ["string", "number", "string", "string", "number", "number", "number", "string"],
-                [cfgUrl, 128, "", "", 0, 0, 0, ""]
+                [cfgUrl, 128, "", "", 0, 0, 1, ""]
             );
         };
 
