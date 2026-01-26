@@ -51,7 +51,27 @@
     loadScript('term.js', function() {
         term = new Term(80, 24, term_handler, 10000);
         term.open(document.getElementById('term_container'), null);
-        term.write("Booting RISC-V Linux...\r\n");
+
+        // DMC Industries custom welcome
+        var motd = [
+            "\r\n",
+            "    \x1b[33m____  __  ________\x1b[0m\r\n",
+            "   \x1b[33m/ __ \\/  |/  / ____/\x1b[0m\r\n",
+            "  \x1b[33m/ / / / /|_/ / /    \x1b[0m\r\n",
+            " \x1b[33m/ /_/ / /  / / /___  \x1b[0m\r\n",
+            "\x1b[33m/_____/_/  /_/\\____/  \x1b[0m\r\n",
+            "    \x1b[33mINDUSTRIES PNW\x1b[0m\r\n",
+            "\r\n",
+            "\x1b[37m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1b[0m\r\n",
+            "  Welcome to DMC Industries Terminal\r\n",
+            "  RISC-V Linux running in WebAssembly\r\n",
+            "\x1b[37m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1b[0m\r\n",
+            "\r\n",
+            "Booting system...\r\n\r\n"
+        ];
+        for (var i = 0; i < motd.length; i++) {
+            term.write(motd[i]);
+        }
 
         Module.preRun = function() {
             console_write1 = Module.cwrap('console_queue_char', null, ['number']);
