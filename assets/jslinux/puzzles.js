@@ -165,20 +165,29 @@ function injectPuzzleFiles() {
 
     console.log('TALON: Injecting puzzle files via shell commands...');
 
+    // Disable echo so user doesn't see all the file content
+    sendCommand('stty -echo');
+
     // Small delay between files to let shell process
-    let delay = 0;
+    let delay = 100;
     Object.entries(TALON_FILES).forEach(([filename, content]) => {
         setTimeout(() => {
             createFile(filename, content);
             console.log('TALON: Created ' + filename);
         }, delay);
-        delay += 500; // 500ms between each file
+        delay += 300; // 300ms between each file
     });
 
-    // Clear screen after all files created
+    // Re-enable echo, clear screen, show ready message
     setTimeout(() => {
+        sendCommand('stty echo');
         sendCommand('clear');
-        sendCommand('echo ""; echo "[OVERSEER] Assessment files ready."; echo ""; echo "Type: ls"; echo ""');
+        sendCommand('echo ""');
+        sendCommand('echo "[OVERSEER] Assessment files deployed."');
+        sendCommand('echo ""');
+        sendCommand('echo "Type: ls"');
+        sendCommand('echo "Then: cat README"');
+        sendCommand('echo ""');
         console.log('TALON: All files created');
         if (window.parent !== window) {
             window.parent.postMessage({ type: 'talon-ready' }, '*');
