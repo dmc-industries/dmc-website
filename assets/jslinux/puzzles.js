@@ -178,16 +178,9 @@ function injectPuzzleFiles() {
         delay += 300; // 300ms between each file
     });
 
-    // Re-enable echo, clear screen, show ready message
+    // Re-enable echo and clear screen
     setTimeout(() => {
-        sendCommand('stty echo');
-        sendCommand('clear');
-        sendCommand('echo ""');
-        sendCommand('echo "[OVERSEER] Assessment files deployed."');
-        sendCommand('echo ""');
-        sendCommand('echo "Type: ls"');
-        sendCommand('echo "Then: cat README"');
-        sendCommand('echo ""');
+        sendCommand('stty echo; clear; echo ""; echo "[OVERSEER] Assessment files deployed."; echo ""; echo "Commands: ls, cat README"; echo ""');
         console.log('TALON: All files created');
         if (window.parent !== window) {
             window.parent.postMessage({ type: 'talon-ready' }, '*');
