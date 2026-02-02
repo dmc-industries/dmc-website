@@ -15,8 +15,8 @@ You have been identified as a potential asset for DMC Industries.
 This terminal contains five trials designed to assess your capabilities.
 
 STRUCTURE:
-  /home/candidate/trials/     - Your assessment chambers
-  /home/candidate/.overseer/  - Protocol documentation
+  ~/trials/     - Your assessment chambers
+  ~/.overseer/  - Protocol documentation
 
 INSTRUCTIONS:
   1. Navigate to each trial directory
@@ -346,10 +346,10 @@ function injectPuzzleFiles() {
         return false;
     }
 
-    // Inject each file
+    // Inject each file to /root/ (user's home directory)
     let injectedCount = 0;
     Object.entries(TALON_FILES).forEach(([path, content]) => {
-        const fullPath = '/home/candidate/' + path;
+        const fullPath = '/root/' + path;
         const encoder = new TextEncoder();
         const data = encoder.encode(content);
 
