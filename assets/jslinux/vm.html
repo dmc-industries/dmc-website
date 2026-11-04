@@ -26,6 +26,8 @@
 <body>
     <div id="term_container"></div>
 
+    <!-- Project TALON puzzle files; must load before the VM starts -->
+    <script src="puzzles.js"></script>
     <script>
     var term, console_write1;
     var graphic_display, display_key_event, display_mouse_event;
@@ -92,6 +94,11 @@
     };
 
     function term_handler(str) {
+        // TALON holds keys back while it writes the puzzle files
+        if (window.talon) {
+            talon.input(str);
+            return;
+        }
         for (var i = 0; i < str.length; i++) {
             if (console_write1) console_write1(str.charCodeAt(i));
         }
@@ -135,6 +142,8 @@
             term.write(motd[i]);
         }
 
+        if (window.talon) talon.attach(term);
+
         Module.preRun = function() {
             console_write1 = Module.cwrap('console_queue_char', null, ['number']);
             fs_import_file = Module.cwrap('fs_import_file', null, ['string', 'number', 'number']);
@@ -162,16 +171,6 @@
             if (window.parent !== window) {
                 window.parent.postMessage({ type: 'vm-ready' }, '*');
             }
-
-            // Load Project TALON puzzle system (after VM initialization)
-            setTimeout(function() {
-                loadScript('puzzles.js', function() {
-                    console.log('TALON: Puzzle system loaded');
-                    if (typeof waitForShellAndInject === 'function') {
-                        waitForShellAndInject();
-                    }
-                });
-            }, 100);
         });
     });
     </script>

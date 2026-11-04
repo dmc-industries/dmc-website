@@ -1,6 +1,8 @@
 /**
  * Project TALON - Recruitment Puzzle System
- * Creates puzzle files by sending commands to the shell
+ * Writes the trial files into /root when the VM's shell first comes up.
+ * Loaded by vm.html, which calls talon.attach(term) and routes keys
+ * through talon.input().
  */
 
 // Puzzle file contents
@@ -121,97 +123,170 @@ echo "Hint: First letter of each trial answer"
 fi`
 };
 
-/**
- * Send a string to the VM console as if typed
+/*
+ * The VM's root filesystem is an ext2 block device, which fs_import_file
+ * can't write to, so the files are created by typing commands into the shell.
+ * To keep that invisible and independent of what the user does:
+ *
+ *  - injection starts the moment the first shell prompt is printed
+ *  - keystrokes are held back until the files exist, then replayed
+ *  - VM output is hidden while the commands run
+ *  - every path is absolute, so the shell's working directory doesn't matter
+ *  - each command echoes a marker, and the next command is sent only after
+ *    that marker comes back. This keeps every burst well under the emulator's
+ *    console input buffer (about 1 KB; anything past it is dropped).
  */
-function sendToConsole(str) {
-    if (typeof console_write1 !== 'function') {
-        console.error('TALON: console_write1 not available');
-        return false;
-    }
-    for (let i = 0; i < str.length; i++) {
-        console_write1(str.charCodeAt(i));
-    }
-    return true;
-}
+window.talon = (function () {
+    const TARGET_DIR = '/root';
+    const CHUNK_MAX = 400;           // printf payload chars per command
+    const STEP_TIMEOUT_MS = 10000;   // shell stopped answering: give up
+    const BOOT_HOLD_MS = 90000;      // never saw a prompt: stop holding keys
 
-/**
- * Send a command and press enter
- */
-function sendCommand(cmd) {
-    sendToConsole(cmd + '\n');
-}
+    const PROMPT_RE = /[#$] $/;
+    const ANSI_RE = /\x1b\[[0-9;?]*[A-Za-z]/g;
+    const CURSOR_REPORT_RE = /\x1b\[\d+;\d+R/g;
 
-/**
- * Create a file using heredoc
- */
-function createFile(filename, content) {
-    // Escape any single quotes in content
-    const escaped = content.replace(/'/g, "'\\''");
-    const cmd = `cat << 'TALONEOF' > ${filename}
-${content}
-TALONEOF`;
-    sendCommand(cmd);
-}
+    let state = 'boot';              // boot -> injecting -> done
+    let holdKeys = true;
+    let rawWrite = null;
+    let recent = '';                 // tail of visible output, for prompt detection
+    let hidden = '';                 // output swallowed while injecting
+    let heldKeys = '';
+    let steps = [];
+    let step = 0;
+    let stepTimer = null;
+    let bootTimer = null;
 
-/**
- * Inject all puzzle files
- */
-function injectPuzzleFiles() {
-    if (typeof console_write1 !== 'function') {
-        console.log('TALON: console_write1 not available yet');
-        return false;
+    function type(str) {
+        if (typeof console_write1 !== 'function') return false;
+        for (let i = 0; i < str.length; i++) console_write1(str.charCodeAt(i));
+        return true;
     }
 
-    console.log('TALON: Injecting puzzle files via shell commands...');
+    // The "" splits the marker in the typed command, so an echoed command
+    // line never matches; only printf's output does. No trailing newline,
+    // so after the last marker the shell prints just its prompt.
+    function marker(i) { return 'TALON_OK_' + i + '_'; }
+    function markerCmd(i) { return 'printf TALON""_OK_' + i + '_'; }
 
-    // Disable echo so user doesn't see all the file content
-    sendCommand('stty -echo');
+    // Escape text for `printf %b '...'`, split into chunks that never cut
+    // an escape sequence in half.
+    function printfChunks(text) {
+        const chunks = [];
+        let cur = '';
+        for (const ch of text) {
+            const t = ch === '\\' ? '\\\\'
+                    : ch === '\n' ? '\\n'
+                    : ch === "'" ? "'\\''"
+                    : ch;
+            if (cur.length + t.length > CHUNK_MAX) {
+                chunks.push(cur);
+                cur = '';
+            }
+            cur += t;
+        }
+        if (cur) chunks.push(cur);
+        return chunks;
+    }
 
-    // Small delay between files to let shell process
-    let delay = 100;
-    Object.entries(TALON_FILES).forEach(([filename, content]) => {
-        setTimeout(() => {
-            createFile(filename, content);
-            console.log('TALON: Created ' + filename);
-        }, delay);
-        delay += 300; // 300ms between each file
-    });
+    function buildSteps() {
+        const cmds = ['stty -echo'];
+        for (const [name, content] of Object.entries(TALON_FILES)) {
+            const path = TARGET_DIR + '/' + name;
+            printfChunks(content + '\n').forEach((chunk, i) => {
+                cmds.push(`printf %b '${chunk}' ${i ? '>>' : '>'} ${path}`);
+            });
+        }
+        cmds.push(`chmod 755 ${TARGET_DIR}/verify.sh`);
+        cmds.push('stty echo');
+        return cmds.map((cmd, i) => `${cmd}; ${markerCmd(i)}\n`);
+    }
 
-    // Re-enable echo and clear screen
-    setTimeout(() => {
-        sendCommand('stty echo; clear; echo ""; echo "[OVERSEER] Assessment files deployed."; echo ""; echo "Commands: ls, cat README"; echo ""');
-        console.log('TALON: All files created');
+    function onOutput(str) {
+        if (state === 'injecting') {
+            hidden += str;
+            checkMarker();
+            return;
+        }
+        rawWrite(str);
+        if (state === 'boot') {
+            recent = (recent + str).slice(-256);
+            if (PROMPT_RE.test(recent.replace(ANSI_RE, ''))) start();
+        }
+    }
+
+    function onInput(str) {
+        if (state === 'injecting' || (state === 'boot' && holdKeys)) {
+            heldKeys += str;
+        } else {
+            type(str);
+        }
+    }
+
+    function start() {
+        if (state === 'injecting' || typeof console_write1 !== 'function') return;
+        state = 'injecting';
+        clearTimeout(bootTimer);
+        steps = buildSteps();
+        step = 0;
+        hidden = '';
+        // Ctrl-U first clears anything already typed on the shell's line.
+        sendStep('\x15');
+    }
+
+    function sendStep(prefix) {
+        clearTimeout(stepTimer);
+        stepTimer = setTimeout(abort, STEP_TIMEOUT_MS);
+        type((prefix || '') + steps[step]);
+    }
+
+    function checkMarker() {
+        const m = marker(step);
+        const at = hidden.indexOf(m);
+        if (at < 0) return;
+        hidden = hidden.slice(at + m.length);
+        if (++step < steps.length) sendStep();
+        else finish();
+    }
+
+    function finish() {
+        clearTimeout(stepTimer);
+        state = 'done';
+        // Redraw over the prompt that was on screen when output was hidden.
+        // The marker has no newline, so what follows it is the new prompt.
+        rawWrite('\r\x1b[K' + hidden);
+        hidden = '';
+        releaseKeys();
+        console.log('TALON: files ready in ' + TARGET_DIR);
         if (window.parent !== window) {
             window.parent.postMessage({ type: 'talon-ready' }, '*');
         }
-    }, delay + 500);
+    }
 
-    return true;
-}
+    function abort() {
+        console.error('TALON: shell stopped responding at step ' + step + ', giving up');
+        state = 'done';
+        hidden = '';
+        type('\x15stty echo\n');
+        releaseKeys();
+    }
 
-/**
- * Wait for shell to be ready, then inject files
- */
-let talonInjected = false;
-function waitForShellAndInject() {
-    // Wait for shell prompt - try after 20 seconds when kernel should be booted
-    setTimeout(function() {
-        if (!talonInjected && typeof console_write1 === 'function') {
-            talonInjected = true;
-            injectPuzzleFiles();
-        }
-    }, 20000);
+    function releaseKeys() {
+        // Cursor-position replies belong to prompts we hid; the shell asks again.
+        const keys = heldKeys.replace(CURSOR_REPORT_RE, '');
+        heldKeys = '';
+        if (keys) type(keys);
+    }
 
-    // Backup attempt at 35 seconds
-    setTimeout(function() {
-        if (!talonInjected && typeof console_write1 === 'function') {
-            talonInjected = true;
-            injectPuzzleFiles();
-        }
-    }, 35000);
-}
+    // Call once the terminal exists, before the VM starts printing.
+    function attach(term) {
+        rawWrite = term.write.bind(term);
+        term.write = onOutput;
+        bootTimer = setTimeout(function () {
+            holdKeys = false;
+            releaseKeys();
+        }, BOOT_HOLD_MS);
+    }
 
-// Export for manual triggering
-window.talonInject = injectPuzzleFiles;
-window.talonSend = sendCommand;
+    return { attach: attach, input: onInput, inject: start };
+})();
