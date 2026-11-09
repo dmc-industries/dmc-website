@@ -906,9 +906,10 @@ const LS = {
   del(k) { try { localStorage.removeItem(`${NS}.${k}`); } catch {} },
 };
 const CONFIG_DEFAULTS = {
-  initial_sync_count: 500,       // §3 envelopes per synced folder on first sync
+  initial_sync_count: 500,       // §3 envelopes to download per synced folder (0 = all; older ones follow in the background)
   poll_s: 60,                    // §3 delta poll interval (also F5 / F9)
-  max_cached: 5000,              // §8 envelope cap per folder (oldest evicted; re-fetchable)
+  max_cached: 5000,              // §8 envelope cap per folder (0 = no cap; oldest evicted; re-fetchable)
+  perf_log: false,               // log slow tasks (≥ 50 ms) to the console with what was running
   attachment_cache_mb: 200,      // §3 attachment blob cache, LRU
   sounds: true,                  // §4 new-mail ding / error donk
   block_images: true,            // §5.3 remote pictures blocked by default
@@ -931,6 +932,35 @@ const ui = Object.assign({}, UI_DEFAULTS, LS.get('ui', {}));
 const saveUi = debounce(() => LS.set('ui', ui), 200);
 const safeSenders = new Set(LS.get('safe', []));
 const saveSafe = () => LS.set('safe', [...safeSenders]);
+const keepTarget = () => Math.min(config.initial_sync_count || Infinity, config.max_cached || Infinity);
+
+// Slow-task log: every main-thread task ≥ 50 ms (PerformanceObserver 'longtask') is tagged with the activities that
+// overlapped it (sync steps, commands, bus events, folder loads). Options → Advanced → Diagnostics; LK.perf in tests.
+const perf = {
+  tasks: [], spans: [], open: new Map(), seq: 0,
+  act(k, label) {
+    const now = performance.now(), o = this.open.get(k);
+    if (o) { o.e = now; this.open.delete(k); }
+    if (label) { const sp = { label, s: now, e: null }; this.open.set(k, sp); this.spans.push(sp); if (this.spans.length > 4000) this.spans.splice(0, 1000); }
+  },
+  mark(label, pr) {                            // lasts until the current task ends, or until the promise settles
+    const k = `m${++this.seq}`; this.act(k, label);
+    if (pr && pr.finally) pr.finally(() => this.act(k, null)).catch(() => {}); else setTimeout(() => this.act(k, null), 0);
+    return pr;
+  },
+  add(start, dur) {
+    const end = start + dur, ctx = [...new Set(this.spans.filter((x) => x.s <= end && (x.e == null || x.e >= start)).map((x) => x.label))];
+    const t = { at: Date.now() - Math.round(performance.now() - start), ms: Math.round(dur), ctx: ctx.join(' | ') || 'unattributed' };
+    this.tasks.push(t); if (this.tasks.length > 500) this.tasks.shift();
+    if (config.perf_log) console.warn(`[lookout] slow task ${t.ms} ms — ${t.ctx}`);
+  },
+  summary(n = 12) {
+    const g = new Map(); for (const t of this.tasks) { const x = g.get(t.ctx) || { ctx: t.ctx, n: 0, total: 0, max: 0 }; x.n++; x.total += t.ms; x.max = Math.max(x.max, t.ms); g.set(t.ctx, x); }
+    return [...g.values()].sort((a, b) => b.total - a.total).slice(0, n);
+  },
+  init() { try { new PerformanceObserver((l) => { for (const e of l.getEntries()) this.add(e.startTime, e.duration); }).observe({ type: 'longtask', buffered: true }); } catch {} },
+};
+perf.init();
 
 /* ======================================================================================
  * §2 IndexedDB (design §3): accounts, folders, messages, bodies, attachments, outbox, syncstate, ops, contacts
@@ -1926,6 +1956,9 @@ const tokenFrom = (j, prev = {}) => ({
   access_token: j.access_token, refresh_token: j.refresh_token || prev.refresh_token || null,
   expires_at: Date.now() + (Number(j.expires_in) || 3600) * 1000, scope: j.scope || prev.scope || '',
 });
+// Built-in Microsoft app registration (public client, personal + work accounts, device code on, SPA redirect http://localhost).
+// A public client has no secret, so this ID is not sensitive. Empty = users must register their own app (README).
+const MS_APP_ID = '1a596504-3234-4793-a593-9e023715e3d4';
 const MS_SCOPES = 'https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/User.Read offline_access';
 const GOOGLE_SCOPES = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send';
 function oauthEndpoints(acct) {
@@ -3268,7 +3301,7 @@ const plainToClean = (text) => ({ head: '', body: `<pre class="plain">${textToHt
 const bus = {
   m: new Map(),
   on(ev, fn) { if (!this.m.has(ev)) this.m.set(ev, new Set()); this.m.get(ev).add(fn); return () => this.m.get(ev).delete(fn); },
-  emit(ev, data) { for (const fn of [...(this.m.get(ev) || [])]) { try { fn(data); } catch (e) { if (!/freed|detached|closed/i.test(String(e))) console.error('[lookout] listener', ev, e); this.m.get(ev).delete(fn); } } },
+  emit(ev, data) { if (this.m.get(ev)?.size) perf.mark(`event ${ev}`); for (const fn of [...(this.m.get(ev) || [])]) { try { fn(data); } catch (e) { if (!/freed|detached|closed/i.test(String(e))) console.error('[lookout] listener', ev, e); this.m.get(ev).delete(fn); } } },
 };
 const LOCAL = { outbox: '~outbox', syncissues: '~syncissues' };
 const isLocalId = (id) => /:~/.test(id);
@@ -3432,6 +3465,7 @@ const store = {
   },
   async enforceCaps(acctId, folders) {
     for (const f of folders) {
+      if (!config.max_cached) return;
       const n = await this.db.count('messages', 'folders', f.id); if (n <= config.max_cached) continue;
       const recs = (await this.folderMessages(f.id)).filter((r) => !r.local).sort((a, b) => a.date - b.date).slice(0, n - config.max_cached);
       const puts = [], dels = [];
@@ -3653,7 +3687,7 @@ class AccountSync {
   constructor(acct, ad) { this.acct = acct; this.ad = ad; this.st = null; this.ready = false; this.running = null; this.dead = false; }
   async state() { if (!this.st) this.st = (await store.db.get('syncstate', this.acct.id)) || { key: this.acct.id, token: null, folders: {} }; return this.st; }
   save() { if (!this.dead) return store.db.put('syncstate', this.st); }
-  progress(t) { bus.emit('progress', { acct: this.acct.id, text: t }); }
+  progress(t) { perf.act(`sync ${this.acct.id}`, t && `sync ${this.acct.name}: ${t}`); bus.emit('progress', { acct: this.acct.id, text: t }); }
   async want(folderId) { const st = await this.state(); st.folders[folderId] = { ...(st.folders[folderId] || {}), want: true }; await this.save(); }
   async isSynced(folderId) { const st = await this.state(); return !!(st.folders[folderId] || {}).init; }
   async moreCursor(folderId) { const st = await this.state(); return (st.folders[folderId] || {}).more || null; }
@@ -3684,7 +3718,7 @@ class AccountSync {
         const fs = (st.folders[f.id] = st.folders[f.id] || {});
         if (fs.init) continue;
         this.progress(`Synchronizing ${f.name}...`);
-        const N = config.initial_sync_count; let got = 0, cursor = null, oldest = 0;
+        const N = keepTarget(); let got = 0, cursor = null, oldest = 0;
         do {
           const r = await ad.listEnvelopes(f.rid, { cursor, limit: Math.min(500, N - got) });
           await store.applyRemote(A, r.items, [], { initial: true });
@@ -3708,6 +3742,7 @@ class AccountSync {
       const { fresh } = await store.applyRemote(A, d.changed, d.deleted);
       await this.save();
       await store.processOutbox(A);
+      this.backlog = await this.backfill(want);
       await store.enforceCaps(A, want);
       st.last = Date.now(); await this.save();
       store.setStatus(A, 'ok');
@@ -3719,6 +3754,20 @@ class AccountSync {
       store.setStatus(A, e.kind === 'auth' ? 'auth' : e.kind === 'cors' ? 'cors' : e.kind === 'network' || e.kind === 'timeout' ? 'offline' : 'error', e);
       throw e;
     }
+  }
+  // Folders synced under a smaller "download" setting fetch their older messages a few pages per cycle.
+  // Graph: like scrolling to the end, these older messages are outside the delta window (DECISIONS L15).
+  async backfill(want, budgetMs = 15000) {
+    const target = keepTarget(), until = Date.now() + budgetMs, st = await this.state();
+    for (const f of want) {
+      const fs = st.folders[f.id];
+      while (fs && fs.init && fs.more && !this.dead && (await store.db.count('messages', 'folders', f.id)) < target) {
+        if (Date.now() > until) return true;
+        this.progress(`Downloading older messages in ${f.name}...`);
+        if (!(await this.loadMore(f.id))) break;
+      }
+    }
+    return false;
   }
   async loadMore(folderId) {
     const st = await this.state(); const fs = st.folders[folderId]; if (!fs || !fs.more) return 0;
@@ -3742,7 +3791,7 @@ const syncer = {
     try {
       const res = await Promise.allSettled(store.accounts.map((a) => { const s = store.syncs.get(a.id); return s ? s.run(manual) : null; }));
       res.forEach((r, i) => { if (r.status === 'fulfilled') fresh += (r.value && r.value.fresh) || 0; else errors.push({ acct: store.accounts[i], error: r.reason }); });
-    } finally { this.active--; bus.emit('sync', { active: this.active > 0, manual, errors }); this.schedule(config.poll_s * 1000); }
+    } finally { this.active--; bus.emit('sync', { active: this.active > 0, manual, errors }); this.schedule([...store.syncs.values()].some((s) => s.backlog) ? 2000 : config.poll_s * 1000); }
     this.lastErrors = errors;
     if (fresh) { sound.play('ding'); bus.emit('newmail', { n: fresh }); }
     return { fresh, errors };
@@ -3841,7 +3890,7 @@ const tbButtons = [];                  // [{el, cmd}] refreshed on selection cha
 function runCmd(name, ...args) {
   const c = cmds[name]; if (!c) return;
   if (c.enabled && !c.enabled()) { sound.play('donk'); return; }
-  try { const r = c.run(...args); if (r && r.catch) r.catch((e) => errorBox(e)); } catch (e) { errorBox(e); }
+  try { const r = perf.mark(`command ${name}`, c.run(...args)); if (r && r.catch) r.catch((e) => errorBox(e)); } catch (e) { errorBox(e); }
 }
 function refreshCommands() {
   for (const b of tbButtons) { const c = cmds[b.cmd]; if (!c) continue; b.el.disabled = !!(c.enabled && !c.enabled()); b.el.classList.toggle('checked', !!(c.checked && c.checked())); }
@@ -4618,7 +4667,7 @@ function buildMain() {
     const changed = M.folderId !== id || M.today;
     M.today = false; M.folderId = id; M.acct = f.acct; ui.folder = id; saveUi();
     renderTree(); updateTitle();
-    if (changed) { M.filter = null; $('#findbar').hidden = !M.findOpen; await loadFolder(true); }
+    if (changed) { M.filter = null; $('#findbar').hidden = !M.findOpen; await perf.mark(`open folder ${f.name}`, loadFolder(true)); }
     if (!f.local) { const s = store.syncs.get(f.acct); if (s && !(await s.isSynced(id))) { await s.want(id); syncer.runAccount(f.acct); } }
   }
   M.selectNode = selectNode;
@@ -5517,7 +5566,7 @@ async function folderProperties(f) {
         ['Total items:', String(f.total || 0)], ['Unread items:', String(f.unread || 0)], ['Cached on this computer:', String(cached)], ['Synchronized:', f.local ? 'Local folder' : synced ? 'Yes (kept up to date)' : 'No (open the folder to start)']]),
       h('div.etched-h'), h('label.cb', null, h('input', { type: 'checkbox', checked: true, disabled: true }), h('span', { text: 'Show number of unread items' }))) },
     { label: '&Synchronization', build: () => h('div', { style: { minHeight: '220px' } }, h('p', { text: `This folder is ${f.local ? 'stored only on this computer' : synced ? 'synchronized with the server every ' + config.poll_s + ' seconds' : 'not synchronized yet'}.` }),
-      h('p', { text: `At most ${config.max_cached} messages are kept on this computer; older ones are downloaded again when you scroll to the end of the list.` }),
+      h('p', { text: config.max_cached ? `At most ${config.max_cached.toLocaleString()} messages are kept on this computer; older ones are downloaded again when you scroll to the end of the list.` : 'All messages are kept on this computer.' }),
       f.local ? null : h('button.btn', { type: 'button', onclick: async () => { const st = await s.state(); delete st.folders[f.id]; if (st.token && st.token.f) delete st.token.f[f.rid]; await s.save(); await store.purgeMessages(f.acct, f.id); await s.want(f.id); syncer.runAccount(f.acct); } }, 'Download Again')) },
   ]);
   dialog({ title: `${f.name} Properties`, width: 380, body: tabs.el, buttons: [{ label: 'OK', value: 'ok', default: true }, { label: 'Cancel', value: 'cancel', cancel: true }] });
@@ -5648,7 +5697,7 @@ function imapSettingsProblem(s) {
 }
 function accountWizard({ kind } = {}) {
   const id = uid('a');
-  const st = { page: 'name', displayName: '', kind: kind || 'graph', settings: { tenant: 'consumers', authMethod: Desktop.hosted ? 'paste' : 'device', sessionUrl: 'https://api.fastmail.com/jmap/session' }, me: null, name: '' };
+  const st = { page: 'name', displayName: '', kind: kind || 'graph', settings: { tenant: 'consumers', clientSource: MS_APP_ID ? 'builtin' : 'own', authMethod: Desktop.hosted ? 'paste' : 'device', sessionUrl: 'https://api.fastmail.com/jmap/session' }, me: null, name: '' };
   const pageEl = h('div.page'); const side = h('div.side', null, ic('wizard', true), h('div.wm', { text: APP }));
   let signin = null;
   const order = () => st.kind === 'demo' ? ['name', 'type', 'done'] : ['name', 'type', 'settings', 'signin', 'done'];
@@ -5668,8 +5717,10 @@ function accountWizard({ kind } = {}) {
       radio('k', 'demo', 'Demo mailbox', 'Generated mail; nothing leaves this computer'));
     if (p === 'settings') {
       if (st.kind === 'graph') pageEl.replaceChildren(h('h3', { text: 'Microsoft Account Settings' }),
-        h('p', { text: 'Register an app in the Microsoft Entra admin center (see README.md): public client, "Allow public client flows" on, delegated permissions Mail.ReadWrite, Mail.Send, User.Read, offline_access.' }),
-        input('clientId', 'Application (client) ID:'),
+        h('fieldset.group', null, h('legend', { text: 'Application' }),
+          radio('clientSource', 'builtin', `Built-in ${APP} app (no setup)`, MS_APP_ID ? 'Microsoft will ask you to approve access to your mail the first time you sign in' : 'Not available in this copy: no built-in app ID is configured', !MS_APP_ID),
+          radio('clientSource', 'own', 'My own app registration', 'Register an app in the Microsoft Entra admin center (see README.md): "Allow public client flows" on, delegated permissions Mail.ReadWrite, Mail.Send, User.Read, offline_access'),
+          input('clientId', 'Application (client) ID:')),
         h('div.row', null, h('label.lbl', { text: 'Accounts:', style: { width: '120px' } }), h('select.field', { style: { flex: '1 1 auto' }, onchange: (e) => { st.settings.tenant = e.target.value; } },
           [['consumers', 'Personal Microsoft accounts only'], ['common', 'Personal and work or school accounts'], ['organizations', 'Work or school accounts only']].map(([v, t]) => h('option', { value: v, text: t, selected: st.settings.tenant === v })))),
         h('fieldset.group', null, h('legend', { text: 'Sign-in method' }), radio('authMethod', 'device', 'Device code (recommended)', Desktop.hosted ? `${webOnly}Microsoft's device-code endpoint does not allow web pages.` : 'Type a short code at microsoft.com/link on any browser or phone', Desktop.hosted),
@@ -5705,7 +5756,8 @@ function accountWizard({ kind } = {}) {
       if (v === 'next') {
         if (st.page === 'settings') {
           const s = st.settings;
-          if (st.kind === 'graph' && !/^[0-9a-f-]{36}$/i.test(s.clientId || '')) { await msgbox({ icon: 'error', text: 'Type the Application (client) ID: a GUID like 00000000-0000-0000-0000-000000000000.' }); return false; }
+          if (st.kind === 'graph' && s.clientSource === 'builtin') s.clientId = MS_APP_ID;
+          else if (st.kind === 'graph' && !/^[0-9a-f-]{36}$/i.test(s.clientId || '')) { await msgbox({ icon: 'error', text: 'Type the Application (client) ID: a GUID like 00000000-0000-0000-0000-000000000000.' }); return false; }
           if (st.kind === 'gmail' && !/\.apps\.googleusercontent\.com$/.test(s.clientId || '')) { await msgbox({ icon: 'error', text: 'Type the OAuth client ID (it ends in .apps.googleusercontent.com).' }); return false; }
           if (st.kind === 'jmap' && (!/^https?:\/\//.test(s.sessionUrl || '') || !s.token)) { await msgbox({ icon: 'error', text: 'Type the JMAP session URL and an API token.' }); return false; }
           if (st.kind === 'imap') { const bad = imapSettingsProblem(s); if (bad) { await msgbox({ icon: 'error', text: bad }); return false; } }
@@ -5761,7 +5813,7 @@ function accountProperties(a) {
   const tabs = tabStrip([
     { label: '&General', build: () => h('div', { style: { minHeight: '160px' } }, h('fieldset.group', null, h('legend', { text: 'Mail Account' }), h('div.row', null, h('label.lbl', { text: 'Account name:' }), nameI)),
       h('fieldset.group', null, h('legend', { text: 'User Information' }), h('div.row', null, h('label.lbl', { text: 'Name:' }), dispI), h('div.row', null, h('label.lbl', { text: 'E-mail address:' }), h('input.field', { value: a.email || '', readOnly: true, style: { flex: '1 1 auto' } })))) },
-    { label: '&Servers', build: () => h('div', { style: { minHeight: '160px' } }, h('table', null, (a.kind === 'graph' ? [['Type', 'Microsoft Graph'], ['Client ID', s.clientId], ['Accounts', s.tenant], ['Sign-in', s.authMethod === 'paste' ? 'Paste-back (SPA)' : 'Device code']]
+    { label: '&Servers', build: () => h('div', { style: { minHeight: '160px' } }, h('table', null, (a.kind === 'graph' ? [['Type', 'Microsoft Graph'], ['Client ID', s.clientId && s.clientId === MS_APP_ID ? `${s.clientId} (built-in)` : s.clientId], ['Accounts', s.tenant], ['Sign-in', s.authMethod === 'paste' ? 'Paste-back (SPA)' : 'Device code']]
       : a.kind === 'gmail' ? [['Type', 'Gmail API'], ['Client ID', s.clientId], ['Sign-in', 'Paste-back (loopback, PKCE)']] : a.kind === 'jmap' ? [['Type', 'JMAP'], ['Session URL', s.sessionUrl]] : a.kind === 'imap' ? [['Type', 'IMAP / SMTP'], ['Incoming (IMAP)', `${s.imapHost}:${s.imapPort} (${s.imapSec === 'starttls' ? 'STARTTLS' : 'SSL/TLS'})`], ['IMAP user name', s.imapUser], ['Outgoing (SMTP)', `${s.smtpHost}:${s.smtpPort} (${s.smtpSec === 'starttls' ? 'STARTTLS' : 'SSL/TLS'})`], ['SMTP user name', s.smtpUser], ['Sent copies', s.saveSent === false ? 'kept by the server' : 'saved by Lookout']] : [['Type', 'Demo mailbox']])
       .map(([k, v]) => h('tr', null, h('td', { text: `${k}:`, style: { paddingRight: '10px' } }), h('td', { text: v || '' })))), a.kind !== 'demo' ? h('button.btn', { type: 'button', style: { marginTop: '10px' }, onclick: () => reauthDialog(a) }, 'Sign In Again...') : null,
       h('p.hint', { text: a.statusText ? `Last error: ${a.statusText}` : '' })) },
@@ -5774,6 +5826,8 @@ function accountProperties(a) {
 function optionsDialog(host = HOST) {
   const c = { ...host.config }; const sigs = new Map(host.store.accounts.map((a) => [a.id, { ...(a.signature || { text: '', newMsgs: true, replies: false }) }]));
   const cb = (key, label) => h('label.cb', null, h('input', { type: 'checkbox', checked: !!c[key], onchange: (e) => { c[key] = e.target.checked; } }), h('span', { text: label }));
+  const pick = (key, vals) => h('select.field', { style: { width: '96px' }, onchange: (e) => { c[key] = Number(e.target.value); } },
+    [...new Set([...vals.filter(Boolean).concat(c[key] || []).sort((a, b) => a - b), 0])].map((v) => h('option', { value: v, text: v ? v.toLocaleString() : 'All', selected: v === (c[key] || 0) })));
   const num = (key, w = 56, min = 0, max = 1e6) => h('input.field', { type: 'number', value: c[key], min, max, style: { width: `${w}px` }, onchange: (e) => { c[key] = clamp(Math.round(Number(e.target.value) || 0), min, max); e.target.value = c[key]; } });
   const pages = [
     { label: '&General', build: () => h('div', null,
@@ -5812,24 +5866,29 @@ function optionsDialog(host = HOST) {
       (async () => {
         let est = {}; try { est = await navigator.storage.estimate(); } catch {}
         diag.value = [`${APP} ${VERSION} — ${DEMO ? 'demo mode' : 'normal mode'}`, `Separate windows: ${ui.windowsBroken ? 'unavailable (in-app windows)' : 'available'}`,
-          `Storage: ${fmtBytes(est.usage || 0)} used of ${fmtBytes(est.quota || 0)}`, `Network: ${net.online ? 'online' : 'disconnected'}`, '', 'Recent network activity:', ...net.log.slice(-40)].join('\n');
+          `Storage: ${fmtBytes(est.usage || 0)} used of ${fmtBytes(est.quota || 0)}`, `Network: ${net.online ? 'online' : 'disconnected'}`, '',
+          `Slow tasks (≥ 50 ms, last ${perf.tasks.length}) by activity — total / count / longest:`, ...(perf.tasks.length ? perf.summary().map((x) => `  ${x.total} ms / ${x.n}× / ${x.max} ms — ${x.ctx}`) : ['  none']),
+          '', 'Recent network activity:', ...net.log.slice(-40)].join('\n');
       })();
       return h('div', null,
-        h('fieldset.group', null, h('legend', { text: 'Synchronization' }), h('div.row', null, h('span', { text: 'Messages to download per folder on first sync:', style: { flex: '1 1 auto' } }), num('initial_sync_count', 64, 50, 5000)),
-          h('div.row', null, h('span', { text: 'Messages to keep per folder:', style: { flex: '1 1 auto' } }), num('max_cached', 64, 100, 200000)),
+        h('fieldset.group', null, h('legend', { text: 'Synchronization' }), h('div.row', null, h('span', { text: 'Messages to download per folder:', style: { flex: '1 1 auto' } }), pick('initial_sync_count', [200, 500, 1000, 2000, 5000, 10000, 0])),
+          h('div.row', null, h('span', { text: 'Messages to keep per folder:', style: { flex: '1 1 auto' } }), pick('max_cached', [1000, 5000, 10000, 20000, 50000, 0])),
+          h('p.hint', { text: 'Newest first. Folders that are already synchronized download the extra messages in the background; the oldest are removed when a folder is over the limit.' }),
           h('div.row', null, h('span', { text: 'Attachment cache size (MB):', style: { flex: '1 1 auto' } }), num('attachment_cache_mb', 64, 10, 100000))),
         h('div.row', null, h('button.btn', { type: 'button', onclick: async () => { await host.store.db.clear('attachments'); await host.store.db.clear('bodies'); msgbox({ icon: 'info', text: 'Cached message bodies and attachments were deleted. They will be downloaded again when needed.' }); } }, 'Clear Cache'),
           h('button.btn', { type: 'button', onclick: async () => { if (!(await confirmBox('Delete ALL local data (accounts, cached mail, settings) from this computer? Nothing is deleted on the servers.'))) return; for (const a of [...host.store.accounts]) await host.store.removeAccount(a.id); localStorage.clear(); location.reload(); } }, 'Delete All Local Data...')),
+        cb('perf_log', 'Log slow tasks to the browser console (Ctrl+Shift+I)'),
         h('div', { text: 'Diagnostics:', style: { margin: '6px 0 2px' } }), diag);
     } },
   ];
   const tabs = tabStrip(pages);
+  const before = { d: host.config.initial_sync_count, k: host.config.max_cached };
   const apply = async () => {
     Object.assign(host.config, c); host.saveConfig();
     for (const [id, s] of sigs) { const a = host.store.account(id); if (a) { a.signature = s; await host.store.saveAccount(a); } }
     if (main) { main.applyLayout(); main.lv.render(); }
     host.bus.emit('options', host.config);                          // every window re-applies its screen fonts
-    host.syncer.schedule(host.config.poll_s * 1000);
+    host.syncer.schedule(before.d !== c.initial_sync_count || before.k !== c.max_cached ? 500 : host.config.poll_s * 1000);
   };
   dialog({ title: 'Options', width: 460, body: tabs.el, buttons: [{ label: 'OK', value: 'ok', default: true }, { label: 'Cancel', value: 'cancel', cancel: true }, { label: '&Apply', value: 'apply' }],
     onButton: async (v) => { if (v === 'ok') await apply(); if (v === 'apply') { await apply(); return false; } } });
@@ -6049,11 +6108,12 @@ function bootChild() {
   const t = setInterval(() => { let alive = false; try { alive = !!(window.opener && !window.opener.closed && window.opener.lookout); } catch {} if (!alive) { clearInterval(t); document.body.classList.add('orphan'); shell.setTitle(`${document.title} (main window closed)`); } }, 2000);
 }
 async function boot() {
+  perf.act('boot', 'start-up');
   buildIconSheet();
   window.LK = {
     store, mailOps, syncer, contacts, ui, config, bus, net, tokens, cmds, runCmd, dialogs, frames, menu, views, sanitizeHtml, srcdocFor, MIME, ICONS, MAPS, PAL, sound, NetError,
     DemoAdapter, DemoServer, GraphAdapter, GmailAdapter, JmapAdapter, ADAPTERS, request, deviceCodeFlow, pkceStart, pkceFinish, searchMail, parseAddrs, htmlToText, textToHtml,
-    openCompose, openMessage, msgbox, accountWizard, optionsDialog, aboutDialog, reauthDialog, screenFonts, patchTrueType, ImapAdapter, bridge,
+    openCompose, openMessage, msgbox, accountWizard, optionsDialog, aboutDialog, reauthDialog, MS_APP_ID, perf, screenFonts, patchTrueType, ImapAdapter, bridge,
     imap: { decodeWords, rfc2231, mutf7, seqSet, seqExpand, imapParse, bsWalk, bsClassify, imapDate, transferDecode, charsetDecode, ridParts, parseHeaderBlock }, get main() { return main; }, get host() { return HOST; }, VIEW, DEMO,
     Desktop, zipStored,
   };
@@ -6071,9 +6131,10 @@ async function boot() {
   if (DEMO) {
     if (PARAMS.get('latency') === '0') DemoAdapter.latency = [0, 0];
     const n = Number(PARAMS.get('n')) || 0;      // stress demo (?n=50000): cache everything, in memory only (not saved)
-    if (n > config.initial_sync_count) { config.initial_sync_count = n; config.max_cached = Math.max(config.max_cached, n); }
+    if (n > keepTarget()) { config.initial_sync_count = n; if (config.max_cached) config.max_cached = Math.max(config.max_cached, n); }
     if (PARAMS.get('deliver') !== '0') { const tick = () => setTimeout(() => { if (!ui.offline) { DemoAdapter.server().deliver(); const a = store.accounts[0]; if (a) syncer.runAccount(a.id); } tick(); }, 60000 + Math.random() * 60000); tick(); }
   }
+  perf.act('boot', null);
   syncer.start();
   if (!store.accounts.length) setTimeout(() => accountWizard(), 300);
   addEventListener('online', () => { net.setOnline(true); syncer.schedule(1000); });
