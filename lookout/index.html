@@ -803,6 +803,7 @@ const PAGE_SNAPSHOT = '<!doctype html>\n' + document.documentElement.outerHTML;
  * ====================================================================================== */
 const APP = 'Lookout 2000';
 const VERSION = '1.0';
+const BUILD = '2026-11-10 · 7fd3778';
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
@@ -1769,8 +1770,16 @@ function buildIconSheet() {
     ctx.restore();
   });
   BIG_ICONS.forEach((n, i) => { const x = i * 32, y = rows16 * 16; pos[n] = [x, y]; drawBig(ctx, n, x, y); });
-  const url = cv.toDataURL('image/png');
-  const css = [`:root{--icons:url(${url})}`];
+  // Canvas fingerprinting protection (LibreWolf, Tor Browser, Firefox privacy.resistFingerprinting) adds noise
+  // to toDataURL/toBlob/getImageData, corrupting the sprite. The canvas itself renders correctly; only extraction
+  // is poisoned. Detect it and fall back to -moz-element(), which references the canvas directly (Firefox-only CSS).
+  const canvasClean = (() => { try { const t = document.createElement('canvas'); t.width = t.height = 2; const c = t.getContext('2d');
+    c.fillStyle = '#F00'; c.fillRect(0, 0, 2, 2); const d = c.getImageData(0, 0, 2, 2).data;
+    for (let i = 0; i < 16; i += 4) if (d[i] !== 255 || d[i + 1] || d[i + 2] || d[i + 3] !== 255) return false; return true; } catch { return false; } })();
+  let url;
+  if (canvasClean) { url = cv.toDataURL('image/png'); }
+  else { cv.id = 'icon-canvas'; cv.style.cssText = 'position:fixed;left:-9999px;top:0;pointer-events:none'; document.body.appendChild(cv); }
+  const css = [`:root{--icons:${canvasClean ? `url(${url})` : '-moz-element(#icon-canvas)'}}`];
   for (const [n, [x, y]] of Object.entries(pos)) css.push(`[data-ic="${n}"]{background-position:-${x}px -${y}px}`);
   // 8x8 caption glyphs share the 16px cell's top-left corner
   const st = h('style', { id: 'icon-css', text: css.join('\n') });
@@ -5913,7 +5922,8 @@ function aboutDialog() {
     const t = setInterval(() => { if (!credits.isConnected) { clearInterval(t); return; } roll -= 1; if (roll < -lines.length * 14) roll = 130; r.style.top = `${roll}px`; }, 40);
   });
   dialog({ title: `About ${APP}`, width: 420, body: h('div', null, logo, h('div', { style: { padding: '10px 4px 0' } },
-    h('p', { text: `${APP} (version ${VERSION}, build 2000.11.03)`, style: { margin: '0 0 8px' } }),
+    h('p', { text: `${APP} (version ${VERSION}, build 2000.11.03)`, style: { margin: '0 0 2px' } }),
+    BUILD !== 'dev' ? h('p.hint', { text: BUILD, style: { margin: '0 0 8px' } }) : null,
     h('div.etched-h'), credits,
     h('p.hint', { text: 'Not affiliated with, endorsed by, or anything like any real company. All icons are original pixel art. Warning: this program runs in a browser profile with web security turned off; keep that profile for this program only.' }),
     h('p.hint', { text: '© 2026 DMC Industries PNW LLC. All rights reserved.', style: { marginBottom: '0' } }))),
